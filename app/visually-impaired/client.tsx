@@ -158,7 +158,7 @@ export default function VisuallyImpairedClient() {
         formData.append("file", blob, "capture.jpg")
         isProcessingApiCall.current = true
         try {
-          const res = await fetch("http://localhost:8000/upload_image", {
+          const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/upload_image`, {
             method: "POST",
             body: formData,
           })
@@ -186,7 +186,7 @@ export default function VisuallyImpairedClient() {
     isProcessingApiCall.current = true
     stopMicrophone()
     try {
-      const res = await fetch("http://localhost:8000/chat", {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: text, session_id: sessionId }),

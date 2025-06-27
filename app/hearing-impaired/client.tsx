@@ -133,7 +133,7 @@ export default function HearingImpairedClient() {
       const fd = new FormData()
       fd.append("file", blob, "capture.jpg")
       try {
-        const res = await fetch("http://localhost:8000/upload_image", {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/upload_image`, {
           method: "POST",
           body: fd
         })
@@ -155,7 +155,7 @@ export default function HearingImpairedClient() {
     if (!inputText.trim()) return
     setIsLoading(true)
     try {
-      const res = await fetch("http://localhost:8000/chat", {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: inputText, session_id: sessionId })
