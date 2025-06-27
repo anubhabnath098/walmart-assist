@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { Camera, CameraOff, X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -46,6 +46,9 @@ export default function HearingImpairedClient() {
 
   const displayedResponse = useTypewriter(apiResponse)
 
+  // --- Detect if the device is mobile ---
+  const isMobile = useMemo(() => /Mobi|Android/i.test(navigator.userAgent), [])
+
   // --- Preload and select female voice once ---
   useEffect(() => {
     const synth = window.speechSynthesis
@@ -69,7 +72,8 @@ export default function HearingImpairedClient() {
       window.speechSynthesis.cancel()
       const utter = new SpeechSynthesisUtterance(text)
       utter.voice = femaleVoice
-      utter.rate = 1.4
+      // Set speech rate: 1.0 for mobile, 1.4 for other devices
+      utter.rate = isMobile ? 1.0 : 1.4
       window.speechSynthesis.speak(utter)
     }
   }
@@ -80,7 +84,9 @@ export default function HearingImpairedClient() {
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+      // Use back camera on mobile, default camera on other devices
+      const constraints = isMobile ? { video: { facingMode: 'environment' } } : { video: true }
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
       if (videoRef.current) videoRef.current.srcObject = stream
       setIsCameraOn(true)
       setSessionId(null)

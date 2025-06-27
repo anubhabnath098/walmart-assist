@@ -16,8 +16,8 @@ export default function Home() {
       <div className="container mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-12">
           <div className="text-center mx-auto">
-            <h1 className="text-4xl md:text-6xl font-bold bg-gradient-to-r from-emerald-400 to-green-600 bg-clip-text text-transparent mb-4">
-              Walmart Assist
+            <h1 className="text-4xl md:text-6xl font-bold text-green-600 mb-4">
+                Walmart Assist
             </h1>
             <p className="text-xl text-muted-foreground">Empowering Inclusive Shopping</p>
           </div>

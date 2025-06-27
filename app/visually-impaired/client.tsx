@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { Mic, MicOff, Camera, CameraOff, Loader2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -76,6 +76,8 @@ export default function VisuallyImpairedClient() {
 
   const displayedResponse = useTypewriter(apiResponse)
 
+  const isMobile = useMemo(() => /Mobi|Android/i.test(navigator.userAgent), [])
+
   // --- Preload and select female voice once ---
   useEffect(() => {
     const synth = window.speechSynthesis
@@ -109,7 +111,7 @@ export default function VisuallyImpairedClient() {
           /female|woman|zira|susan|kathleen/i.test(v.name)
         ) ||
       window.speechSynthesis.getVoices()[0]
-    utterance.rate = 1.4 // 40% faster
+    utterance.rate = isMobile ? 1.0 : 1.4 // 1.0 for mobile, 1.4 for others
     utterance.pitch = 1
     utterance.volume = 1
     window.speechSynthesis.speak(utterance)
@@ -206,9 +208,8 @@ export default function VisuallyImpairedClient() {
   // --- Camera controls ---
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-      })
+      const constraints = isMobile ? { video: { facingMode: 'environment' } } : { video: true }
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
       if (videoRef.current) videoRef.current.srcObject = stream
       setIsCameraOn(true)
       setSessionId(null)
