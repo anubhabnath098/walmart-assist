@@ -1,16 +1,17 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Check, X, CalendarClock } from "lucide-react"
+import { Check, X, CalendarClock, Loader2 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useRouter } from "next/navigation"
 
 // Types
 interface QuietTimeRequest {
-  id: string
+  id: number
   userId: string
   userName: string
   storeLocation: string
@@ -20,66 +21,83 @@ interface QuietTimeRequest {
   status: "pending" | "approved" | "rejected"
 }
 
+interface ManagerDetails {
+  storeId: number
+  // Add other manager details as needed
+}
+
 export default function ManagerDashboardClient() {
   const [requests, setRequests] = useState<QuietTimeRequest[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [updatingRequestId, setUpdatingRequestId] = useState<number | null>(null)
   const router = useRouter()
 
-  // Check if user is authenticated as manager
+  // Check if user is authenticated and load data
   useEffect(() => {
-    // In a real app, this would verify the user's session
-    // For demo purposes, we'll just load mock data
-    loadMockData()
-  }, [])
+    const managerDetails = localStorage.getItem("managerDetails")
 
-  // Load mock data
-  const loadMockData = () => {
-    setRequests([
-      {
-        id: "1",
-        userId: "user123",
-        userName: "Alex Johnson",
-        storeLocation: "Walmart Supercenter - Main St",
-        date: "2025-06-20",
-        timeWindow: "10:00 AM - 11:00 AM",
-        reason: "I have sensory processing issues and would appreciate a quieter shopping environment.",
-        status: "pending",
-      },
-      {
-        id: "2",
-        userId: "user456",
-        userName: "Sam Taylor",
-        storeLocation: "Walmart Neighborhood Market - Oak Ave",
-        date: "2025-06-25",
-        timeWindow: "2:00 PM - 3:00 PM",
-        reason: "My child has autism and gets overwhelmed in busy stores.",
-        status: "pending",
-      },
-      {
-        id: "3",
-        userId: "user789",
-        userName: "Jordan Smith",
-        storeLocation: "Walmart Supercenter - River Rd",
-        date: "2025-06-18",
-        timeWindow: "9:00 AM - 10:00 AM",
-        reason: "I have ADHD and find it difficult to focus in noisy environments.",
-        status: "approved",
-      },
-      {
-        id: "4",
-        userId: "user101",
-        userName: "Casey Brown",
-        storeLocation: "Walmart Supercenter - Main St",
-        date: "2025-06-15",
-        timeWindow: "7:00 PM - 8:00 PM",
-        reason: "I experience anxiety in crowded places.",
-        status: "rejected",
-      },
-    ])
+    if (!managerDetails) {
+      // Redirect to login if no manager details found
+      router.push("/")
+      return
+    }
+
+    try {
+      const manager: ManagerDetails = JSON.parse(managerDetails)
+      fetchQuietTimeRequests(manager.storeId)
+    } catch (err) {
+      setError("Invalid manager session. Please login again.")
+      router.push("/")
+    }
+  }, [router])
+
+  // Fetch quiet time requests from API
+  const fetchQuietTimeRequests = async (storeId: number) => {
+    try {
+      setIsLoading(true)
+      setError("")
+
+      const response = await fetch(`/api/manager/quiettime?storeId=${storeId}`)
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch quiet time requests")
+      }
+
+      const data = await response.json()
+      setRequests(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred while fetching requests")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   // Update request status
-  const updateRequestStatus = (id: string, status: "approved" | "rejected") => {
-    setRequests(requests.map((request) => (request.id === id ? { ...request, status } : request)))
+  const updateRequestStatus = async (id: number, status: "approved" | "rejected") => {
+    try {
+      setUpdatingRequestId(id)
+      setError("")
+
+      const response = await fetch("/api/manager/quiettime", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id, status }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to update request status")
+      }
+
+      // Update local state
+      setRequests(requests.map((request) => (request.id === id ? { ...request, status } : request)))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred while updating the request")
+    } finally {
+      setUpdatingRequestId(null)
+    }
   }
 
   // Filter requests by status
@@ -87,8 +105,25 @@ export default function ManagerDashboardClient() {
   const approvedRequests = requests.filter((request) => request.status === "approved")
   const rejectedRequests = requests.filter((request) => request.status === "rejected")
 
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center min-h-[400px]">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span>Loading quiet time requests...</span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-6">
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
       <Tabs defaultValue="pending" className="w-full">
         <TabsList className="grid w-full grid-cols-3 mb-6">
           <TabsTrigger value="pending">
@@ -125,7 +160,7 @@ export default function ManagerDashboardClient() {
                           <Badge>Pending</Badge>
                         </div>
                         <p className="text-sm text-muted-foreground mb-2">{request.storeLocation}</p>
-                        <p className="text-sm text-muted-foreground mb-3">
+                        <p className="text-sm text-muted-foreground mb-3" suppressHydrationWarning>
                           {request.date} • {request.timeWindow}
                         </p>
                         {request.reason && <p className="text-sm bg-muted p-3 rounded mb-4">{request.reason}</p>}
@@ -133,18 +168,28 @@ export default function ManagerDashboardClient() {
                           <Button
                             variant="outline"
                             size="sm"
-                            className="flex items-center gap-1"
+                            className="flex items-center gap-1 bg-transparent"
                             onClick={() => updateRequestStatus(request.id, "rejected")}
+                            disabled={updatingRequestId === request.id}
                           >
-                            <X className="h-4 w-4" />
+                            {updatingRequestId === request.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <X className="h-4 w-4" />
+                            )}
                             Reject
                           </Button>
                           <Button
                             size="sm"
                             className="flex items-center gap-1"
                             onClick={() => updateRequestStatus(request.id, "approved")}
+                            disabled={updatingRequestId === request.id}
                           >
-                            <Check className="h-4 w-4" />
+                            {updatingRequestId === request.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Check className="h-4 w-4" />
+                            )}
                             Approve
                           </Button>
                         </div>
@@ -178,7 +223,7 @@ export default function ManagerDashboardClient() {
                           </Badge>
                         </div>
                         <p className="text-sm text-muted-foreground mb-2">{request.storeLocation}</p>
-                        <p className="text-sm text-muted-foreground mb-3">
+                        <p className="text-sm text-muted-foreground mb-3" suppressHydrationWarning>
                           {request.date} • {request.timeWindow}
                         </p>
                         {request.reason && <p className="text-sm bg-muted p-3 rounded">{request.reason}</p>}

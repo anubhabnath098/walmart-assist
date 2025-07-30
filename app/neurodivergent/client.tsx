@@ -1,9 +1,10 @@
 "use client"
 
-import type React from "react"
+import { DialogFooter } from "@/components/ui/dialog"
 
-import { useState, useEffect } from "react"
-import { PlusCircle, Check, Clock, Bell, CalendarClock } from "lucide-react"
+import type React from "react"
+import { useState, useEffect, useRef } from "react"
+import { PlusCircle, Check, Clock, Bell, CalendarClock, RotateCcw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -12,27 +13,23 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 // Types
 interface ShoppingItem {
   id: string
   name: string
   emoji: string
-  reminderTime: number // minutes from now
+  reminderTime: number
   completed: boolean
   createdAt: number
+  timerStarted: boolean
+  timedOut: boolean
 }
 
 interface QuietTimeRequest {
-  id: string
+  id: number
+  storeId: number
   storeLocation: string
   date: string
   timeWindow: string
@@ -40,18 +37,56 @@ interface QuietTimeRequest {
   status: "pending" | "approved" | "rejected"
 }
 
+interface TimedOutItemAction {
+  itemId: string
+  action: "rewind" | "cancel" | null
+}
+
+interface LoginResponse {
+  userId: number
+  userEmail: string
+  quietRequests: QuietTimeRequest[]
+}
+
 export default function NeurodivergentClient() {
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [userId, setUserId] = useState<number | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+
+  // Add this useEffect after the existing state declarations
+  useEffect(() => {
+    // Load saved email and userId from localStorage on component mount
+    const savedEmail = localStorage.getItem("userEmail")
+    const savedUserId = localStorage.getItem("userId")
+    if (savedEmail) {
+      setEmail(savedEmail)
+    }
+    if (savedUserId) {
+      setUserId(Number.parseInt(savedUserId))
+      setIsAuthenticated(true)
+      // Load user data if already authenticated
+      loadUserData(Number.parseInt(savedUserId))
+    }
+  }, [isAuthenticated])
 
   // Shopping list state
   const [items, setItems] = useState<ShoppingItem[]>([])
   const [newItemName, setNewItemName] = useState("")
   const [newItemEmoji, setNewItemEmoji] = useState("🛒")
   const [newItemReminderMinutes, setNewItemReminderMinutes] = useState(15)
-  const [reminderItem, setReminderItem] = useState<ShoppingItem | null>(null)
+
+  // Add this after the existing state declarations
+  const [itemProgress, setItemProgress] = useState<{ [key: string]: number }>({})
+
+  // Timer and reminder state
+  const [timedOutItems, setTimedOutItems] = useState<ShoppingItem[]>([])
+  const [itemActions, setItemActions] = useState<TimedOutItemAction[]>([])
+  const [showTimedOutDialog, setShowTimedOutDialog] = useState(false)
+  const timersRef = useRef<{ [key: string]: NodeJS.Timeout }>({})
+  const speechRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   // Quiet time request state
   const [quietRequests, setQuietRequests] = useState<QuietTimeRequest[]>([])
@@ -64,66 +99,138 @@ export default function NeurodivergentClient() {
   // Common emojis for shopping
   const commonEmojis = ["🛒", "🥕", "🥩", "🍎", "🥛", "🧀", "🍞", "🧻", "🧼", "💊", "📱"]
 
-  // Handle login
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault()
-    // Mock authentication
-    if (email && password) {
-      setIsAuthenticated(true)
-      // Load mock data
-      loadMockData()
+  // Store mapping for API calls
+  const storeMapping: { [key: string]: number } = {
+    "walmart-supercenter-main-st": 1,
+    "walmart-neighborhood-oak-ave": 2,
+    "walmart-supercenter-river-rd": 3,
+  }
+
+  // Add CircularProgress component
+  const CircularProgress = ({ progress, size = 40 }: { progress: number; size?: number }) => {
+    const radius = (size - 4) / 2
+    const circumference = radius * 2 * Math.PI
+    const strokeDasharray = circumference
+    const strokeDashoffset = circumference - (progress / 100) * circumference
+
+    return (
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg className="transform -rotate-90" width={size} height={size}>
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke="currentColor"
+            strokeWidth="2"
+            fill="transparent"
+            className="text-muted-foreground/20"
+          />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke="currentColor"
+            strokeWidth="2"
+            fill="transparent"
+            strokeDasharray={strokeDasharray}
+            strokeDashoffset={strokeDashoffset}
+            className={`transition-all duration-1000 ${
+              progress >= 100 ? "text-red-500" : progress >= 75 ? "text-orange-500" : "text-primary"
+            }`}
+            strokeLinecap="round"
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span
+            className={`text-xs font-medium ${
+              progress >= 100 ? "text-red-500" : progress >= 75 ? "text-orange-500" : "text-primary"
+            }`}
+          >
+            {Math.round(progress)}%
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  // Load user data from API
+  const loadUserData = async (userId: number) => {
+    console.log(userId);
+    try {
+      const response = await fetch(`/api/user/quiettime?userId=${userId}`)
+      if (response.ok) {
+        const data = await response.json()
+        setQuietRequests(data)
+      }
+
+    } catch (error) {
+      console.error("Error loading user data:", error)
     }
   }
 
-  // Load mock data
-  const loadMockData = () => {
-    // Mock shopping items
-    setItems([
-      {
-        id: "1",
-        name: "Milk",
-        emoji: "🥛",
-        reminderTime: 10,
-        completed: false,
-        createdAt: Date.now(),
-      },
-      {
-        id: "2",
-        name: "Bread",
-        emoji: "🍞",
-        reminderTime: 15,
-        completed: false,
-        createdAt: Date.now(),
-      },
-      {
-        id: "3",
-        name: "Apples",
-        emoji: "🍎",
-        reminderTime: 20,
-        completed: false,
-        createdAt: Date.now(),
-      },
-    ])
+  // Handle login with API call
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsLoading(true)
+    try {
+      const response = await fetch("/api/user/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userEmail: email,
+          password: password,
+        }),
+      })
 
-    // Mock quiet time requests
-    setQuietRequests([
-      {
-        id: "1",
-        storeLocation: "Walmart Supercenter - Main St",
-        date: "2025-06-20",
-        timeWindow: "10:00 AM - 11:00 AM",
-        reason: "Sensory sensitivity to loud noises",
-        status: "approved",
+      if (response.ok) {
+        const data: LoginResponse = await response.json()
+
+        // Save to localStorage
+        localStorage.setItem("userEmail", data.userEmail)
+        localStorage.setItem("userId", data.userId.toString())
+
+        // Update state
+        setUserId(data.userId)
+        setIsAuthenticated(true)
+        setQuietRequests(data.quietRequests || [])
+
+        // Initialize empty shopping list
+        setItems([])
+      } else {
+        // Handle login error
+        console.error("Login failed")
+        alert("Login failed. Please check your credentials.")
+      }
+    } catch (error) {
+      console.error("Login error:", error)
+      alert("Login error. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Start timer for an item
+  const startTimer = (item: ShoppingItem) => {
+    if (timersRef.current[item.id]) {
+      clearTimeout(timersRef.current[item.id])
+    }
+
+    timersRef.current[item.id] = setTimeout(
+      () => {
+        setItems((prevItems) => prevItems.map((i) => (i.id === item.id ? { ...i, timedOut: true } : i)))
       },
-      {
-        id: "2",
-        storeLocation: "Walmart Neighborhood Market - Oak Ave",
-        date: "2025-06-25",
-        timeWindow: "2:00 PM - 3:00 PM",
-        reason: "Need a low-stimulation environment",
-        status: "pending",
-      },
-    ])
+      item.reminderTime * 60 * 1000,
+    ) // Convert minutes to milliseconds
+  }
+
+  // Clear timer for an item
+  const clearTimer = (itemId: string) => {
+    if (timersRef.current[itemId]) {
+      clearTimeout(timersRef.current[itemId])
+      delete timersRef.current[itemId]
+    }
   }
 
   // Add new shopping item
@@ -136,66 +243,186 @@ export default function NeurodivergentClient() {
         reminderTime: newItemReminderMinutes,
         completed: false,
         createdAt: Date.now(),
+        timerStarted: true,
+        timedOut: false,
       }
-
       setItems([...items, newItem])
+      startTimer(newItem)
       setNewItemName("")
       setNewItemEmoji("🛒")
       setNewItemReminderMinutes(15)
     }
   }
 
-  // Toggle item completion
+  // Toggle item completion - now deletes the item instead of marking as completed
   const toggleItemCompletion = (id: string) => {
-    setItems(items.map((item) => (item.id === id ? { ...item, completed: !item.completed } : item)))
+    // Clear the timer for this item
+    clearTimer(id)
+
+    // Remove the item completely from the list
+    setItems(items.filter((item) => item.id !== id))
   }
 
-  // Submit quiet time request
-  const submitQuietTimeRequest = (e: React.FormEvent) => {
-    e.preventDefault()
+  // Speak the timed out message
+  const speakTimedOutMessage = (items: ShoppingItem[]) => {
+    if ("speechSynthesis" in window) {
+      const itemNames = items.map((item) => item.name).join(", ")
+      const message = `Hey! Your time has run out for ${itemNames}`
 
-    if (storeLocation && requestDate && timeWindow) {
-      const newRequest: QuietTimeRequest = {
-        id: Date.now().toString(),
-        storeLocation,
-        date: requestDate,
-        timeWindow,
-        reason: requestReason,
-        status: "pending",
-      }
+      speechRef.current = new SpeechSynthesisUtterance(message)
+      speechRef.current.rate = 0.8
+      speechRef.current.pitch = 1
+      speechRef.current.volume = 0.8
 
-      setQuietRequests([...quietRequests, newRequest])
-      setRequestSuccess(true)
-
-      // Reset form
-      setStoreLocation("")
-      setRequestDate("")
-      setTimeWindow("")
-      setRequestReason("")
-
-      // Hide success message after 3 seconds
-      setTimeout(() => {
-        setRequestSuccess(false)
-      }, 3000)
+      window.speechSynthesis.speak(speechRef.current)
     }
   }
 
-  // Check for reminders
+  // Handle action selection for timed out item
+  const handleItemAction = (itemId: string, action: "rewind" | "cancel") => {
+    setItemActions((prev) => {
+      const existing = prev.find((a) => a.itemId === itemId)
+      if (existing) {
+        return prev.map((a) => (a.itemId === itemId ? { ...a, action } : a))
+      } else {
+        return [...prev, { itemId, action }]
+      }
+    })
+  }
+
+  // Submit actions for all timed out items
+  const submitTimedOutActions = () => {
+    setItems((prevItems) => {
+      return prevItems
+        .filter((item) => {
+          const action = itemActions.find((a) => a.itemId === item.id)
+          if (action?.action === "cancel") {
+            clearTimer(item.id)
+            return false // Remove item
+          } else if (action?.action === "rewind") {
+            clearTimer(item.id)
+            const rewindedItem = { ...item, timedOut: false, createdAt: Date.now() }
+            startTimer(rewindedItem)
+            return true // Keep item but it will be updated
+          }
+          return true
+        })
+        .map((item) => {
+          const action = itemActions.find((a) => a.itemId === item.id)
+          if (action?.action === "rewind") {
+            return { ...item, timedOut: false, createdAt: Date.now() }
+          }
+          return item
+        })
+    })
+
+    // Reset dialog state
+    setTimedOutItems([])
+    setItemActions([])
+    setShowTimedOutDialog(false)
+  }
+
+  // Check if all timed out items have actions selected
+  const allActionsSelected = timedOutItems.every((item) =>
+    itemActions.some((action) => action.itemId === item.id && action.action !== null),
+  )
+
+  // Submit quiet time request with API call
+  const submitQuietTimeRequest = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (storeLocation && requestDate && timeWindow && userId) {
+      setIsLoading(true)
+
+      try {
+        const storeId = storeMapping[storeLocation]
+        const response = await fetch("/api/user/quiettime", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            userId: userId,
+            storeId: storeId,
+            date: requestDate,
+            timeWindow: timeWindow,
+            reason: requestReason,
+          }),
+        })
+
+        if (response.ok) {
+          // Refresh quiet time requests
+          await loadUserData(userId)
+
+          setRequestSuccess(true)
+          // Reset form
+          setStoreLocation("")
+          setRequestDate("")
+          setTimeWindow("")
+          setRequestReason("")
+
+          // Hide success message after 3 seconds
+          setTimeout(() => {
+            setRequestSuccess(false)
+          }, 3000)
+        } else {
+          console.error("Failed to submit quiet time request")
+          alert("Failed to submit request. Please try again.")
+        }
+      } catch (error) {
+        console.error("Error submitting quiet time request:", error)
+        alert("Error submitting request. Please try again.")
+      } finally {
+        setIsLoading(false)
+      }
+    }
+  }
+
+  // Check for timed out items
   useEffect(() => {
-    const checkReminders = setInterval(() => {
+    const checkTimedOut = setInterval(() => {
+      const currentTimedOut = items.filter((item) => item.timedOut && !item.completed)
+
+      if (currentTimedOut.length > 0 && !showTimedOutDialog) {
+        setTimedOutItems(currentTimedOut)
+        setItemActions(currentTimedOut.map((item) => ({ itemId: item.id, action: null })))
+        setShowTimedOutDialog(true)
+        speakTimedOutMessage(currentTimedOut)
+      }
+    }, 1000) // Check every second
+
+    return () => clearInterval(checkTimedOut)
+  }, [items, showTimedOutDialog])
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(timersRef.current).forEach((timer) => clearTimeout(timer))
+    }
+  }, [])
+
+  // Update progress for all active items
+  useEffect(() => {
+    const updateProgress = setInterval(() => {
       const now = Date.now()
+      const newProgress: { [key: string]: number } = {}
 
       items.forEach((item) => {
-        if (!item.completed) {
-          const reminderTime = item.createdAt + item.reminderTime * 60 * 1000
-          if (now >= reminderTime) {
-            setReminderItem(item)
-          }
+        if (item.timerStarted && !item.timedOut) {
+          const elapsed = now - item.createdAt
+          const totalTime = item.reminderTime * 60 * 1000 // Convert to milliseconds
+          const progress = Math.min((elapsed / totalTime) * 100, 100)
+          newProgress[item.id] = progress
+        } else if (item.timedOut) {
+          newProgress[item.id] = 100
+        } else {
+          newProgress[item.id] = 0
         }
       })
-    }, 10000) // Check every 10 seconds
 
-    return () => clearInterval(checkReminders)
+      setItemProgress(newProgress)
+    }, 1000) // Update every second
+
+    return () => clearInterval(updateProgress)
   }, [items])
 
   // If not authenticated, show login form
@@ -218,6 +445,7 @@ export default function NeurodivergentClient() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  disabled={isLoading}
                 />
               </div>
               <div className="space-y-2">
@@ -228,15 +456,16 @@ export default function NeurodivergentClient() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  disabled={isLoading}
                 />
               </div>
-              <Button type="submit" className="w-full">
-                Sign In
+              <Button type="submit" className="w-full" disabled={isLoading}>
+                {isLoading ? "Signing In..." : "Sign In"}
               </Button>
             </form>
           </CardContent>
           <CardFooter className="flex justify-center">
-            <p className="text-sm text-muted-foreground">For demo purposes, enter any email and password</p>
+            <p className="text-sm text-muted-foreground">Enter your credentials to continue</p>
           </CardFooter>
         </Card>
       </div>
@@ -245,37 +474,54 @@ export default function NeurodivergentClient() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Reminder Dialog */}
-      <Dialog open={!!reminderItem} onOpenChange={() => setReminderItem(null)}>
-        <DialogContent className="rounded-2xl">
+      {/* Timed Out Items Dialog */}
+      <Dialog open={showTimedOutDialog} onOpenChange={() => {}}>
+        <DialogContent className="rounded-2xl max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Bell className="h-5 w-5 text-primary" />
-              Reminder
+              <Bell className="h-5 w-5 text-red-500" />
+              Time's Up!
             </DialogTitle>
-            <DialogDescription>Did you forget to get this item?</DialogDescription>
+            <DialogDescription>
+              Your time has run out for the following items. Choose an action for each:
+            </DialogDescription>
           </DialogHeader>
-
-          {reminderItem && (
-            <div className="p-4 bg-muted rounded-lg flex items-center gap-3">
-              <span className="text-2xl">{reminderItem.emoji}</span>
-              <span className="text-xl font-medium">{reminderItem.name}</span>
-            </div>
-          )}
-
+          <div className="space-y-4 max-h-60 overflow-y-auto">
+            {timedOutItems.map((item) => {
+              const currentAction = itemActions.find((a) => a.itemId === item.id)?.action
+              return (
+                <div key={item.id} className="p-4 bg-muted rounded-lg">
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="text-2xl">{item.emoji}</span>
+                    <span className="text-lg font-medium">{item.name}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant={currentAction === "rewind" ? "default" : "outline"}
+                      onClick={() => handleItemAction(item.id, "rewind")}
+                      className="flex-1"
+                    >
+                      <RotateCcw className="h-4 w-4 mr-1" />
+                      Rewind Timer
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={currentAction === "cancel" ? "destructive" : "outline"}
+                      onClick={() => handleItemAction(item.id, "cancel")}
+                      className="flex-1"
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      Cancel Item
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReminderItem(null)}>
-              Dismiss
-            </Button>
-            <Button
-              onClick={() => {
-                if (reminderItem) {
-                  toggleItemCompletion(reminderItem.id)
-                  setReminderItem(null)
-                }
-              }}
-            >
-              Mark as Got It
+            <Button onClick={submitTimedOutActions} disabled={!allActionsSelected} className="w-full">
+              Submit Actions
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -289,7 +535,7 @@ export default function NeurodivergentClient() {
 
         <TabsContent value="shopping-list" className="space-y-6">
           {/* Next Item Card */}
-          {items.filter((item) => !item.completed).length > 0 && (
+          {items.length > 0 && (
             <Card className="rounded-2xl border-primary/50">
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg">Next Item</CardTitle>
@@ -297,16 +543,22 @@ export default function NeurodivergentClient() {
               </CardHeader>
               <CardContent>
                 {(() => {
-                  const nextItem = items.find((item) => !item.completed)
+                  const nextItem = items[0]
                   if (nextItem) {
                     return (
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
+                          <CircularProgress progress={itemProgress[nextItem.id] || 0} size={48} />
                           <span className="text-4xl">{nextItem.emoji}</span>
-                          <span className="text-2xl font-medium">{nextItem.name}</span>
+                          <div className="flex flex-col">
+                            <span className="text-2xl font-medium">{nextItem.name}</span>
+                            {nextItem.timedOut && (
+                              <span className="text-sm text-red-500 font-medium">⏰ Time's up!</span>
+                            )}
+                          </div>
                         </div>
                         <Button size="sm" className="rounded-full" onClick={() => toggleItemCompletion(nextItem.id)}>
-                          <Check className="h-5 w-5 mr-1" /> Got It
+                          <Check className="h-5 w-5 mr-1" /> Delete Item
                         </Button>
                       </div>
                     )
@@ -352,7 +604,6 @@ export default function NeurodivergentClient() {
                     </Select>
                   </div>
                 </div>
-
                 <div>
                   <Label htmlFor="reminder-time">Reminder (minutes)</Label>
                   <Select
@@ -363,6 +614,7 @@ export default function NeurodivergentClient() {
                       <SelectValue placeholder="15 minutes" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="1">1 minute</SelectItem>
                       <SelectItem value="5">5 minutes</SelectItem>
                       <SelectItem value="10">10 minutes</SelectItem>
                       <SelectItem value="15">15 minutes</SelectItem>
@@ -371,7 +623,6 @@ export default function NeurodivergentClient() {
                     </SelectContent>
                   </Select>
                 </div>
-
                 <Button onClick={addItem}>Add Item</Button>
               </div>
             </CardContent>
@@ -384,7 +635,7 @@ export default function NeurodivergentClient() {
                 <Clock className="h-5 w-5" />
                 Your Shopping List
               </CardTitle>
-              <CardDescription>{items.filter((item) => !item.completed).length} items remaining</CardDescription>
+              <CardDescription>{items.length} items remaining</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -395,57 +646,37 @@ export default function NeurodivergentClient() {
                 ) : (
                   <>
                     {/* Pending Items */}
-                    {items.filter((item) => !item.completed).length > 0 && (
+                    {items.length > 0 && (
                       <div className="space-y-2">
                         <h3 className="text-sm font-medium text-muted-foreground">To Get:</h3>
-                        {items
-                          .filter((item) => !item.completed)
-                          .map((item) => (
-                            <div key={item.id} className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                              <div className="flex items-center gap-3">
-                                <span className="text-2xl">{item.emoji}</span>
+                        {items.map((item) => (
+                          <div
+                            key={item.id}
+                            className={`flex items-center justify-between p-3 rounded-lg ${
+                              item.timedOut ? "bg-red-50 border border-red-200" : "bg-muted"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <CircularProgress progress={itemProgress[item.id] || 0} size={32} />
+                              <span className="text-2xl">{item.emoji}</span>
+                              <div className="flex flex-col">
                                 <span>{item.name}</span>
+                                {item.timedOut && (
+                                  <span className="text-xs text-red-500 font-medium">⏰ Time's up!</span>
+                                )}
                               </div>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="rounded-full h-8 w-8 p-0"
-                                onClick={() => toggleItemCompletion(item.id)}
-                              >
-                                <Check className="h-4 w-4" />
-                                <span className="sr-only">Mark as completed</span>
-                              </Button>
                             </div>
-                          ))}
-                      </div>
-                    )}
-
-                    {/* Completed Items */}
-                    {items.filter((item) => item.completed).length > 0 && (
-                      <div className="space-y-2">
-                        <h3 className="text-sm font-medium text-muted-foreground">Got It:</h3>
-                        {items
-                          .filter((item) => item.completed)
-                          .map((item) => (
-                            <div
-                              key={item.id}
-                              className="flex items-center justify-between p-3 bg-muted/50 rounded-lg text-muted-foreground"
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="rounded-full h-8 w-8 p-0"
+                              onClick={() => toggleItemCompletion(item.id)}
                             >
-                              <div className="flex items-center gap-3">
-                                <span className="text-2xl">{item.emoji}</span>
-                                <span className="line-through">{item.name}</span>
-                              </div>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="rounded-full h-8 w-8 p-0"
-                                onClick={() => toggleItemCompletion(item.id)}
-                              >
-                                <Check className="h-4 w-4" />
-                                <span className="sr-only">Mark as not completed</span>
-                              </Button>
-                            </div>
-                          ))}
+                              <Check className="h-4 w-4" />
+                              <span className="sr-only">Delete item</span>
+                            </Button>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </>
@@ -479,7 +710,7 @@ export default function NeurodivergentClient() {
               <form onSubmit={submitQuietTimeRequest} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="store-location">Walmart Store Location</Label>
-                  <Select value={storeLocation} onValueChange={setStoreLocation} required>
+                  <Select value={storeLocation} onValueChange={setStoreLocation} required disabled={isLoading}>
                     <SelectTrigger id="store-location">
                       <SelectValue placeholder="Select your Walmart store" />
                     </SelectTrigger>
@@ -496,7 +727,6 @@ export default function NeurodivergentClient() {
                     </SelectContent>
                   </Select>
                 </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="request-date">Date</Label>
                   <Input
@@ -505,12 +735,12 @@ export default function NeurodivergentClient() {
                     value={requestDate}
                     onChange={(e) => setRequestDate(e.target.value)}
                     required
+                    disabled={isLoading}
                   />
                 </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="time-window">Time Window</Label>
-                  <Select value={timeWindow} onValueChange={setTimeWindow} required>
+                  <Select value={timeWindow} onValueChange={setTimeWindow} required disabled={isLoading}>
                     <SelectTrigger id="time-window">
                       <SelectValue placeholder="Select time window" />
                     </SelectTrigger>
@@ -524,7 +754,6 @@ export default function NeurodivergentClient() {
                     </SelectContent>
                   </Select>
                 </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="request-reason">Reason (Optional)</Label>
                   <Textarea
@@ -533,11 +762,11 @@ export default function NeurodivergentClient() {
                     value={requestReason}
                     onChange={(e) => setRequestReason(e.target.value)}
                     className="min-h-[100px]"
+                    disabled={isLoading}
                   />
                 </div>
-
-                <Button type="submit" className="w-full">
-                  Submit Request
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                  {isLoading ? "Submitting..." : "Submit Request"}
                 </Button>
               </form>
             </CardContent>

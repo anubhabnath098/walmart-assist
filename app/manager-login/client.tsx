@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -10,15 +9,17 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Loader2 } from "lucide-react"
 
 export default function ManagerLoginClient() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
   const [storeLocation, setStoreLocation] = useState("")
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
 
     // Simple validation
@@ -27,12 +28,36 @@ export default function ManagerLoginClient() {
       return
     }
 
-    // Mock authentication - in a real app, this would validate against a backend
-    if (email.includes("@walmart.com")) {
+    setIsLoading(true)
+    setError("")
+
+    try {
+      const response = await fetch("/api/manager/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          managerEmail: email,
+          managerPassword: password,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.message || "Login failed")
+      }
+
+      // Save manager details to localStorage
+      localStorage.setItem("managerDetails", JSON.stringify(data))
+
       // Navigate to dashboard on successful login
       router.push("/manager-dashboard")
-    } else {
-      setError("Please use a valid Walmart manager email address (@walmart.com)")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred during login")
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -49,7 +74,6 @@ export default function ManagerLoginClient() {
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
-
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -59,15 +83,22 @@ export default function ManagerLoginClient() {
                 placeholder="manager@walmart.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={isLoading}
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={isLoading}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="store-location">Store Location</Label>
-              <Select value={storeLocation} onValueChange={setStoreLocation} required>
+              <Select value={storeLocation} onValueChange={setStoreLocation} disabled={isLoading}>
                 <SelectTrigger id="store-location">
                   <SelectValue placeholder="Select your store location" />
                 </SelectTrigger>
@@ -84,13 +115,22 @@ export default function ManagerLoginClient() {
                 </SelectContent>
               </Select>
             </div>
-            <Button type="submit" className="w-full">
-              Sign In
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Signing In...
+                </>
+              ) : (
+                "Sign In"
+              )}
             </Button>
           </form>
         </CardContent>
         <CardFooter className="flex justify-center">
-          <p className="text-sm text-muted-foreground">For demo purposes, use any @walmart.com email</p>
+          <p className="text-sm text-muted-foreground">
+            {isLoading ? "Authenticating..." : "Enter your manager credentials to continue"}
+          </p>
         </CardFooter>
       </Card>
     </div>
