@@ -27,7 +27,7 @@ export async function POST(
   try {
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT userId, userEmail, name
-       FROM user
+       FROM user_table
        WHERE userEmail = ? AND password = ?`,
       [userEmail, password]
     );

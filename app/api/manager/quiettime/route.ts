@@ -38,7 +38,7 @@ export async function GET(
            q.reason,
            q.status
          FROM quiettime q
-         JOIN user u ON q.userId = u.userId
+         JOIN user_table u ON q.userId = u.userId
          JOIN store s ON q.storeId = s.storeId
          WHERE q.storeId = ?`,
         [storeId]

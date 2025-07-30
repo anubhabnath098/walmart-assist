@@ -11,7 +11,7 @@ export default function NeurodivergentPage() {
     if(userId) {
       setIsLoggedIn(true);
     }
-  },[])
+  },[isLoggedIn])
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex justify-between items-start mb-6">
@@ -23,7 +23,7 @@ export default function NeurodivergentPage() {
       <p className="text-lg mb-8">
         Create shopping lists with reminders and request quiet shopping times for a distraction-free experience.
       </p>
-      <NeurodivergentClient />
+      <NeurodivergentClient setIsLoggedIn = {setIsLoggedIn}/>
     </div>
   )
 }

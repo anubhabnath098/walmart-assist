@@ -48,7 +48,7 @@ interface LoginResponse {
   quietRequests: QuietTimeRequest[]
 }
 
-export default function NeurodivergentClient() {
+export default function NeurodivergentClient({setIsLoggedIn}:{setIsLoggedIn: (isLoggedIn: boolean) => void}) {
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [email, setEmail] = useState("")
@@ -195,6 +195,7 @@ export default function NeurodivergentClient() {
         setUserId(data.userId)
         setIsAuthenticated(true)
         setQuietRequests(data.quietRequests || [])
+        setIsLoggedIn(true)
 
         // Initialize empty shopping list
         setItems([])
