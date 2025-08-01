@@ -1,16 +1,27 @@
-import type { Metadata } from "next"
+"use client"
 import Link from "next/link"
 import { Eye, Ear, Brain, ArrowRight } from "lucide-react"
 import ThemeToggle from "@/components/theme-toggle"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { useEffect } from "react"
 
-export const metadata: Metadata = {
-  title: "Walmart Assist - Home",
-  description: "Empowering Inclusive Shopping",
-}
 
 export default function Home() {
+
+  useEffect(() => {
+      async function loadAnnouncements() {
+        try {
+          const res = await fetch('/api/manager/announcement');
+          if (!res.ok) throw new Error(`Error: ${res.status}`);
+          const data = await res.json();
+          localStorage.setItem('announcements', JSON.stringify(data.announcements));
+        } catch (err) {
+          console.error('Failed to fetch announcements:', err);
+        }
+      }
+      loadAnnouncements();
+    }, []);
   return (
     <div className="min-h-screen gradient-bg dark:gradient-bg light:gradient-bg-light grid-pattern dark:grid-pattern light:grid-pattern-light">
       <div className="container mx-auto px-4 py-8">
